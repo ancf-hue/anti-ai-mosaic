@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Анти ИИ Пазл</title>
+    
+    <!-- Классическое подключение фавиконки во вкладке браузера -->
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050512; font-family: sans-serif; touch-action: none; }
+        #game-container { position: relative; width: 100vw; height: 100vh; max-width: 56.25vh; max-height: 177.77vw; margin: 0 auto; background: #020208; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .ui-element { position: absolute; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.9); z-index: 10; font-family: monospace; }
+        
+        /* КЛАССИЧЕСКИЙ ЛОГОТИП FAVICON.ICO ВВЕРХУ ПО ЦЕНТРУ СТРАНИЦЫ */
+        #top-logo-container {
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+            z-index: 30; /* Чтобы логотип был виден поверх меню */
+        }
+        #top-logo-img {
+            width: 24px;
+            height: 24px;
+            filter: drop-shadow(0 0 5px #00ffaa);
+        }
+        #top-logo-text {
+            font-size: 16px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #00ffaa;
+            text-shadow: 0 0 10px rgba(0, 255, 170, 0.5);
+            white-space: nowrap;
+        }
+        
+        #task-box { top: 55px; left: 0; width: 100%; text-align: center; font-size: 14px; color: #ffaa00; font-weight: bold; }
+        #info-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,18,0.95); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 20; }
+        .btn { padding: 15px 40px; font-size: 18px; font-weight: bold; color: #fff; background: linear-gradient(45deg, #ff0055, #aa00ff); border: none; border-radius: 25px; cursor: pointer; box-shadow: 0 0 15px rgba(255,0,85,0.4); margin-top: 20px; }
+        
+        #controls { position: absolute; bottom: 20px; left: 0; width: 100%; display: flex; justify-content: space-around; padding: 0 10px; box-sizing: border-box; z-index: 10; }
+        .ctrl-btn { width: 62px; height: 62px; background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; color: #fff; font-size: 22px; font-weight: bold; display: flex; justify-content: center; align-items: center; user-select: none; }
+        .ctrl-btn:active { background: rgba(255,255,255,0.2); }
+        #btn-snap { background: linear-gradient(45deg, #00ffaa, #0088ff); border: none; font-size: 24px; box-shadow: 0 0 10px rgba(0,255,170,0.3); }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- Постоянный логотип с иконкой favicon.ico вверху по центру экрана -->
+    <div id="top-logo-container" class="ui-element">
+        <img id="top-logo-img" src="favicon.ico" alt="🧩">
+        <span id="top-logo-text">АНТИ ИИ ПАЗЛ</span>
+    </div>
+    
+    <div id="task-box" class="ui-element">ИЗУЧИТЕ КАРТИНКУ УРОВНЯ 1</div>
+    
+    <div id="info-overlay">
+        <h2 id="menu-title" style="color: #00ffaa; text-align:center; letter-spacing:1px; margin: 10px 0; font-family: monospace;">УРОВЕНЬ 1: СЕТКА 3х4</h2>
+        <p id="menu-desc" style="color:#aaa; text-align:center; padding: 0 20px; font-size:14px; max-width:80%;">Нейросеть разбила первый образ. Восстановите его методом рокировки деталей!</p>
+        <button id="action-btn" class="btn">НАЧАТЬ ИГРУ</button>
+    </div>
+
+    <div id="controls">
+        <div class="ctrl-btn" id="btn-left">◀</div>
+        <div class="ctrl-btn" id="btn-up">▲</div>
+        <div class="ctrl-btn" id="btn-down">▼</div>
+        <div class="ctrl-btn" id="btn-right">▶</div>
+        <div class="ctrl-btn" id="btn-snap">✨</div>
+    </div>
+</div>
+
+<script>
+    const container = document.getElementById('game-container');
+    const infoOverlay = document.getElementById('info-overlay');
+    const actionBtn = document.getElementById('action-btn');
+    const menuTitle = document.getElementById('menu-title');
+    const menuDesc = document.getElementById('menu-desc');
+    const taskBox = document.getElementById('task-box');
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    container.appendChild(canvas);
+
+    let isPlaying = false;
+    let isAssembled = false; 
+    let lastTime = 0;
+
+    let currentLevel = 1;
+    let COLS = 3;
+    let ROWS = 4;
+    
+    let puzzleGrid = []; 
+    let activeIndex = 0; 
+
+    let startX = 0, startY = 0, pWidth = 0, pHeight = 0, wSlice = 0, hSlice = 0;
+    let isDragging = false;
+    let lastGridC = -1, lastGridR = -1;
+
+    const imgLvl1 = new Image(); imgLvl1.src = 'ai_image.jpg';
+    const imgLvl2 = new Image(); imgLvl2.src = 'ai_image2.jpg';
+    let currentImg = imgLvl1;
+
+    let audioCtx = null;
+    function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    function playSound(type) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+
+        if (type === 'click') {
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(280, now);
+            gain.gain.setValueAtTime(0.08, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.04);
+            osc.start(now); osc.stop(now + 0.04);
+        } else if (type === 'success') {
+            osc.type = 'sine'; osc.frequency.setValueAtTime(520, now);
+            osc.frequency.setValueAtTime(840, now + 0.07);
+            gain.gain.setValueAtTime(0.2, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+        } else if (type === 'shuffle') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(140, now);
+            osc.frequency.linearRampToValueAtTime(320, now + 0.2);
+            gain.gain.setValueAtTime(0.15, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+        }
+    }
+
+    function shufflePuzzle() {
+        puzzleGrid = [];
+        let positions = [];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                positions.push({x: c, y: r});
+            }
+        }
+        positions.sort(() => Math.random() - 0.5);
+
+        let idx = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                puzzleGrid.push({
+                    correctX: c,
+                    correctY: r,
+                    currentX: positions[idx].x,
+                    currentY: positions[idx].y,
+                    isLocked: false
+                });
+                idx++;
+            }
+        }
+        activeIndex = puzzleGrid.findIndex(p => !p.isLocked);
+    }
+
+    function loop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        lastTime = timestamp;
+
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+        ctx.fillStyle = '#050512'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        pWidth = canvas.width * 0.84;
+        pHeight = pWidth * 1.33; 
+        startX = (canvas.width - pWidth) / 2;
+        startY = canvas.height * 0.14;
+
+        wSlice = pWidth / COLS;
+        hSlice = pHeight / ROWS;
+        const imgWSlice = currentImg.width / COLS;
+        const imgHSlice = currentImg.height / ROWS;
+
+        ctx.strokeStyle = isAssembled ? `rgba(0, 255, 170, ${0.4 + Math.sin(timestamp*0.005)*0.2})` : 'rgba(255,255,255,0.04)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(startX, startY, pWidth, pHeight);
+
+        if (!currentImg.complete) {
+            ctx.fillStyle = '#ffaa00'; ctx.font = '16px monospace'; ctx.textAlign = 'center';
+            ctx.fillText('ЗАГРУЗКА ИИ ШИФРА...', canvas.width/2, canvas.height/2);
+            requestAnimationFrame(loop);
+            return;
+        }
+
+        if (!isPlaying && !isAssembled) {
+            ctx.drawImage(currentImg, startX, startY, pWidth, pHeight);
+        } else {
+            puzzleGrid.forEach((p, idx) => {
+                ctx.save();
+                if (p.isLocked) ctx.globalAlpha = 0.5;
+
+                ctx.drawImage(
+                    currentImg,
+                    p.correctX * imgWSlice, p.correctY * imgHSlice, imgWSlice, imgHSlice,
+                    startX + p.currentX * wSlice, startY + p.currentY * hSlice, wSlice, hSlice
+                );
+                ctx.restore();
+
+                if (idx === activeIndex && !p.isLocked && isPlaying) {
+                    ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 3;
+                    ctx.strokeRect(startX + p.currentX * wSlice + 1, startY + p.currentY * hSlice + 1, wSlice - 2, hSlice - 2);
+                    
+                    ctx.font = '12px monospace'; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'left';
+                    ctx.fillText('🤖 АКТИВ', startX + p.currentX * wSlice + 6, startY + p.currentY * hSlice + 18);
+                }
+            });
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    function getGridPos(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            c: Math.floor((clientX - rect.left - startX) / wSlice),
+            r: Math.floor((clientY - rect.top - startY) / hSlice)
+        };
+    }
+
+    function swapPieces(activeIdx, targetC, targetR) {
+        if (targetC < 0 || targetC >= COLS || targetR < 0 || targetR >= ROWS) return;
+        let p = puzzleGrid[activeIdx];
+        if (!p || p.isLocked) return;
+
+        let neighborIdx = puzzleGrid.findIndex(n => n.currentX === targetC && n.currentY === targetR);
+        if (neighborIdx !== -1) {
+            let neighbor = puzzleGrid[neighborIdx];
+            if (neighbor.isLocked) return;
+            neighbor.currentX = p.currentX; neighbor.currentY = p.currentY;
+            p.currentX = targetC; p.currentY = targetR;
+            playSound('click');
+        }
+    }
+
+    function onPointerDown(e) {
+        if (!isPlaying || isAssembled) return;
+        initAudio();
+        const clientX = e.clientX || (e.touches ? e.touches.clientX : 0);
+        const clientY = e.clientY || (e.touches ? e.touches.clientY : 0);
+        const pos = getGridPos(clientX, clientY);
+
+        let clickedIdx = puzzleGrid.findIndex(p => p.currentX === pos.c && p.currentY === pos.r && !p.isLocked);
+        if (clickedIdx !== -1) {
+            activeIndex = clickedIdx; isDragging = true;
+            lastGridC = pos.c; lastGridR = pos.r;
+            playSound('click');
+        }
+    }
+
+    function onPointerMove(e) {
+        if (!isDragging || !isPlaying) return;
+        const clientX = e.clientX || (e.touches ? e.touches.clientX : 0);
+        const clientY = e.clientY || (e.touches ? e.touches.clientY : 0);
+        const pos = getGridPos(clientX, clientY);
+
+        if ((pos.c !== lastGridC || pos.r !== lastGridR) && pos.c >= 0 && pos.c < COLS && pos.r >= 0 && pos.r < ROWS) {
+            swapPieces(activeIndex, pos.c, pos.r);
+            lastGridC = pos.c; lastGridR = pos.r;
+        }
+    }
+
+    canvas.addEventListener('mousedown', onPointerDown);
+    canvas.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', () => isDragging = false);
+    canvas.addEventListener('touchstart', onPointerDown);
+    canvas.addEventListener('touchmove', onPointerMove);
+    window.addEventListener('touchend', () => isDragging = false);
+
+    function move(dc, dr) {
+        let p = puzzleGrid[activeIndex];
+        if (p && !p.isLocked) swapPieces(activeIndex, p.currentX + dc, p.currentY + dr);
+    }
+
+    document.getElementById('btn-left').addEventListener('pointerdown', () => move(-1, 0));
+    document.getElementById('btn-right').addEventListener('pointerdown', () => move(1, 0));
+    document.getElementById('btn-up').addEventListener('pointerdown', () => move(0, -1));
+    document.getElementById('btn-down').addEventListener('pointerdown', () => move(0, 1));
+    document.getElementById('btn-snap').addEventListener('pointerdown', snapPiece);
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') move(-1, 0);
+        if (e.key === 'ArrowRight') move(1, 0);
+        if (e.key === 'ArrowUp') move(0, -1);
+        if (e.key === 'ArrowDown') move(0, 1);
+        if (e.key === 'Space' || e.key === 'Enter') snapPiece();
+    });
+
+    function snapPiece() {
+        if (!isPlaying || isAssembled) return;
+        let p = puzzleGrid[activeIndex];
+        if (!p || p.isLocked) return;
+
+        if (p.currentX === p.correctX && p.currentY === p.correctY) {
+            p.isLocked = true;
+            playSound('success');
+
+            let nextUnlocked = puzzleGrid.findIndex(n => !n.isLocked);
+            if (nextUnlocked === -1) {
+                isAssembled = true; isPlaying = false;
+                taskBox.innerHTML = `УРОВЕНЬ ${currentLevel} ПРОЙДЕН!`; taskBox.style.color = "#00ffaa";
+                setTimeout(showWinMenu, 2000);
+            } else {
+                activeIndex = nextUnlocked;
+                let lockedCount = puzzleGrid.filter(n => n.isLocked).length;
+                taskBox.innerHTML = `ФРАГМЕНТЫ: ${lockedCount} / ${puzzleGrid.length}`;
+            }
+        } else {
+            playSound('shuffle');
+            let freePieces = puzzleGrid.filter((n, idx) => !n.isLocked && idx !== activeIndex);
+            if (freePieces.length > 0) {
+                let randomTarget = freePieces[Math.floor(Math.random() * freePieces.length)];
+                swapPieces(activeIndex, randomTarget.currentX, randomTarget.currentY);
+            }
+        }
+    }
+
+    actionBtn.addEventListener('click', () => {
+        initAudio();
+        infoOverlay.style.display = 'none';
+        isAssembled = false; isPlaying = true;
+        
+        if (currentLevel === 1) {
+            COLS = 3; ROWS = 4; currentImg = imgLvl1;
+        } else {
+            COLS = 4; ROWS = 5; currentImg = imgLvl2;
+        }
+        
+        taskBox.innerHTML = "ПЕРЕТАСКИВАЙТЕ И ЖМИТЕ ✨"; taskBox.style.color = "#ffaa00";
+        shufflePuzzle();
+    });
+
+    function showWinMenu() {
+        if (currentLevel === 1) {
+            menuTitle.innerHTML = "УРОВЕНЬ 1 ЗАВЕРШЕН!";
+            menuDesc.innerHTML = "Отличная работа! Готовы к Уровню 2? Сетка увеличится до 4х5 (20 осколков).";
+            actionBtn.innerText = "ИГРАТЬ УРОВЕНЬ 2";
+            currentLevel = 2;
+        } else {
+            menuTitle.innerHTML = "АБСОЛЮТНАЯ ПОБЕДА!";
+            menuDesc.innerHTML = "Вы собрали оба ИИ-шифра! Ваш разум неуязвим для машинных алгоритмов.";
+            actionBtn.innerText = "ИГРАТЬ СНАЧАЛА";
+            currentLevel = 1;
+        }
+        infoOverlay.style.display = 'flex';
+        taskBox.innerHTML = `ИЗУЧИТЕ КАРТИНКУ УРОВНЯ ${currentLevel}`; taskBox.style.color = "#fff";
+    }
+
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
